@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -8,16 +9,19 @@ using System.Linq;
 
 public class NetworkManager : MonoBehaviour
 {
-    [Header("API Config")]
-    private string baseUrl = "https://sid-restapi.onrender.com/api";
+    // Singleton para acceso global desde el script del Dinosaurio
+    public static NetworkManager Instance;
 
-    [Header("UI Panels")]
+    [Header("API Config")]
+    private string baseUrl = "http://localhost:8080/api";
+
+    [Header("UI Panels & Containers")]
     public GameObject panelAuth;
     public GameObject panelUser;
+    public GameObject gameContainer; // Referencia al objeto GameManager de la escena
 
     [Header("Input Fields - Auth")]
     public TMP_InputField inputNombre;
-    public TMP_InputField inputCorreo;
     public TMP_InputField inputPassword;
 
     [Header("Input Fields - Game/User")]
@@ -26,23 +30,65 @@ public class NetworkManager : MonoBehaviour
     public TMP_Text textLeaderboard;
 
     private string authToken = "";
+    private string currentUsername = "";
+
+    void Awake()
+    {
+        // Inicialización del Singleton
+        if (Instance == null)
+        {
+            Instance = this;
+        }
+        else
+        {
+            Destroy(gameObject);
+        }
+    }
 
     void Start()
     {
-        // Verificar si ya existe un token guardado en sesión previa
+        // Verificar si existe sesión guardada
         if (PlayerPrefs.HasKey("auth_token"))
         {
             authToken = PlayerPrefs.GetString("auth_token");
+            currentUsername = PlayerPrefs.GetString("auth_username", "");
+
+            if (textWelcome != null) textWelcome.text = "Bienvenid@ " + currentUsername;
+
             panelAuth.SetActive(false);
             panelUser.SetActive(true);
+            if (gameContainer != null) gameContainer.SetActive(false);
+
             StartCoroutine(GetLeaderboard());
         }
         else
         {
             panelAuth.SetActive(true);
             panelUser.SetActive(false);
+            if (gameContainer != null) gameContainer.SetActive(false);
         }
     }
+
+    #region MÉTODOS PÚBLICOS E INTERFAZ
+
+    // Llamado directamente por DinoController.cs cuando el jugador pierde
+    public void SubmitGameScore(int finalScore)
+    {
+        if (panelUser != null) panelUser.SetActive(true);
+        if (gameContainer != null) gameContainer.SetActive(false);
+
+        // Pasamos la puntuación directamente a la corrutina
+        StartCoroutine(UpdateScoreCoroutine(finalScore));
+    }
+
+    // Método opcional para asignar a un botón "Jugar" en la UI
+    public void OnClickStartGame()
+    {
+        if (panelUser != null) panelUser.SetActive(false);
+        if (gameContainer != null) gameContainer.SetActive(true);
+    }
+
+    #endregion
 
     #region BOTONES
     public void OnClickRegister()
@@ -58,45 +104,41 @@ public class NetworkManager : MonoBehaviour
     public void OnClickLogout()
     {
         PlayerPrefs.DeleteKey("auth_token");
+        PlayerPrefs.DeleteKey("auth_username");
         authToken = "";
+        currentUsername = "";
+
         panelAuth.SetActive(true);
         panelUser.SetActive(false);
+        if (gameContainer != null) gameContainer.SetActive(false);
     }
 
-    public void OnClickUpdateScore()
-    {
-        StartCoroutine(UpdateScoreCoroutine());
-    }
+
     #endregion
 
     #region CORRUTINAS HTTP
 
-    // 1. REGISTRO
+    // 1. REGISTRO.
     IEnumerator RegisterCoroutine()
     {
-        AuthData data = new AuthData();
-        data.username = inputNombre.text;
-        data.email = inputCorreo.text;
-        data.password = inputPassword.text;
+        AuthData authData = new AuthData();
+        authData.username = inputNombre.text.Trim();
+        authData.password = inputPassword.text.Trim();
 
-        string json = JsonUtility.ToJson(data);
+        string jsonData = JsonUtility.ToJson(authData);
 
-        using (UnityWebRequest request = UnityWebRequest.PostWwwForm(baseUrl + "/usuarios", "POST"))
+        using (UnityWebRequest www = UnityWebRequest.Post(baseUrl + "/usuarios", jsonData, "application/json"))
         {
-            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
-            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
+            yield return www.SendWebRequest();
 
-            yield return request.SendWebRequest();
-
-            if (request.result == UnityWebRequest.Result.Success)
+            if (www.result != UnityWebRequest.Result.Success)
             {
-                Debug.Log("Registro exitoso. Procede a Iniciar Sesión.");
+                Debug.LogError("Error en Registro: " + www.error + " | " + www.downloadHandler.text);
             }
             else
             {
-                Debug.LogError("Error en Registro: " + request.error);
+                Debug.Log("¡Registro exitoso! Iniciando sesión automáticamente...");
+                StartCoroutine(LoginCoroutine());
             }
         }
     }
@@ -104,87 +146,100 @@ public class NetworkManager : MonoBehaviour
     // 2. LOGIN
     IEnumerator LoginCoroutine()
     {
-        AuthData data = new AuthData();
-        data.email = inputCorreo.text;
-        data.password = inputPassword.text;
+        AuthData authData = new AuthData();
+        authData.username = inputNombre.text.Trim();
+        authData.password = inputPassword.text.Trim();
 
-        string json = JsonUtility.ToJson(data);
+        string jsonData = JsonUtility.ToJson(authData);
 
-        using (UnityWebRequest request = UnityWebRequest.PostWwwForm(baseUrl + "/auth/login", "POST"))
+        using (UnityWebRequest www = UnityWebRequest.Post(baseUrl + "/auth/login", jsonData, "application/json"))
         {
-            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
-            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
+            yield return www.SendWebRequest();
 
-            yield return request.SendWebRequest();
-
-            if (request.result == UnityWebRequest.Result.Success)
+            if (www.result != UnityWebRequest.Result.Success)
             {
-                AuthResponse res = JsonUtility.FromJson<AuthResponse>(request.downloadHandler.text);
-                authToken = res.token;
-                
-                // Guardar token en almacenamiento local
+                Debug.LogError("Error en Login: " + www.error + " | " + www.downloadHandler.text);
+            }
+            else
+            {
+                Debug.Log("¡Login exitoso!: " + www.downloadHandler.text);
+                UserResponse userResponse = JsonUtility.FromJson<UserResponse>(www.downloadHandler.text);
+
+                authToken = userResponse.token;
+                currentUsername = userResponse.usuario.username;
+
                 PlayerPrefs.SetString("auth_token", authToken);
+                PlayerPrefs.SetString("auth_username", currentUsername);
+
+                if (textWelcome != null) textWelcome.text = "Bienvenid@ " + currentUsername;
 
                 panelAuth.SetActive(false);
                 panelUser.SetActive(true);
+                if (gameContainer != null) gameContainer.SetActive(false);
 
                 StartCoroutine(GetLeaderboard());
-            }
-            else
-            {
-                Debug.LogError("Error en Login: " + request.error);
             }
         }
     }
 
-    // 3. ACTUALIZAR SCORE
-    IEnumerator UpdateScoreCoroutine()
+    // 3. ACTUALIZAR SCORE (PATCH)
+    // Sobrecarga para recibir el entero directamente desde el juego
+IEnumerator UpdateScoreCoroutine(int scoreValue)
+{
+    ScoreData innerData = new ScoreData();
+    innerData.score = scoreValue;
+
+    PatchUserRequest requestBody = new PatchUserRequest();
+    requestBody.username = currentUsername;
+    requestBody.data = innerData;
+
+    string json = JsonUtility.ToJson(requestBody);
+
+    using (UnityWebRequest www = new UnityWebRequest(baseUrl + "/usuarios", "PATCH"))
     {
-        ScoreData data = new ScoreData();
-        data.score = int.Parse(inputScore.text);
+        byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
+        www.uploadHandler = new UploadHandlerRaw(bodyRaw);
+        www.downloadHandler = new DownloadHandlerBuffer();
 
-        string json = JsonUtility.ToJson(data);
+        www.SetRequestHeader("Content-Type", "application/json");
+        www.SetRequestHeader("x-token", authToken);
 
-        using (UnityWebRequest request = UnityWebRequest.PostWwwForm(baseUrl + "/usuarios", "PATCH"))
+        yield return www.SendWebRequest();
+
+        if (www.result == UnityWebRequest.Result.Success)
         {
-            byte[] bodyRaw = System.Text.Encoding.UTF8.GetBytes(json);
-            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
-            request.downloadHandler = new DownloadHandlerBuffer();
-            request.SetRequestHeader("Content-Type", "application/json");
-            
-            // Enviar Token de Autenticación en la Cabecera
-            request.SetRequestHeader("x-token", authToken);
-
-            yield return request.SendWebRequest();
-
-            if (request.result == UnityWebRequest.Result.Success)
-            {
-                Debug.Log("Score actualizado exitosamente.");
-                StartCoroutine(GetLeaderboard());
-            }
-            else
-            {
-                Debug.LogError("Error al actualizar score: " + request.error);
-            }
+            Debug.Log("¡Score actualizado con éxito!");
+            StartCoroutine(GetLeaderboard());
+        }
+        else
+        {
+            Debug.LogError("Error al actualizar score: " + www.error + " | " + www.downloadHandler.text);
         }
     }
+}
 
-    // 4. OBTENER TABLA DE POSICIONES Y ORDENAR
+// Mantenemos la versión sin parámetros por si la llamas desde un botón manual
+public void OnClickUpdateScore()
+{
+    if (inputScore != null && !string.IsNullOrEmpty(inputScore.text))
+    {
+        StartCoroutine(UpdateScoreCoroutine(int.Parse(inputScore.text.Trim())));
+    }
+}
+
+    // 4. TABLA DE POSICIONES
     IEnumerator GetLeaderboard()
     {
-        using (UnityWebRequest request = UnityWebRequest.Get(baseUrl + "/usuarios"))
+        using (UnityWebRequest www = UnityWebRequest.Get(baseUrl + "/usuarios"))
         {
-            request.SetRequestHeader("x-token", authToken);
+            www.SetRequestHeader("x-token", authToken);
+            yield return www.SendWebRequest();
 
-            yield return request.SendWebRequest();
-
-            if (request.result == UnityWebRequest.Result.Success)
+            if (www.result == UnityWebRequest.Result.Success)
             {
-                string jsonResult = request.downloadHandler.text;
-                
-                // Formatear JSON si el API devuelve directamente una lista en vez de objeto
+                string jsonResult = www.downloadHandler.text;
+                Debug.Log("RESPUESTA GET LEADERBOARD: " + jsonResult);
+
                 if (jsonResult.StartsWith("["))
                 {
                     jsonResult = "{\"usuarios\":" + jsonResult + "}";
@@ -192,21 +247,77 @@ public class NetworkManager : MonoBehaviour
 
                 UserListResponse list = JsonUtility.FromJson<UserListResponse>(jsonResult);
 
-                // Ordenar usuarios de Mayor a Menor por puntaje usando LINQ
-                List<UserData> sortedList = list.usuarios.OrderByDescending(u => u.score).ToList();
+                List<UserData> sortedList = list.usuarios.OrderByDescending(u => u.GetRealScore()).ToList();
 
-                textLeaderboard.text = "--- TABLA DE PUNTAJES ---\n";
+                textLeaderboard.text = "";
                 foreach (UserData user in sortedList)
                 {
-                    textLeaderboard.text += $"{user.username}: {user.score}\n";
+                    textLeaderboard.text += $"{user.username}: {user.GetRealScore()}\n";
                 }
             }
             else
             {
-                Debug.LogError("Error al consultar la tabla: " + request.error);
+                Debug.LogError("Error al obtener tabla: " + www.error);
             }
         }
     }
 
     #endregion
+}
+
+// ==========================================
+// ESTRUCTURAS DE DATOS DE LA API
+// ==========================================
+[Serializable]
+public class AuthData
+{
+    public string username;
+    public string password;
+}
+
+[Serializable]
+public class UserResponse
+{
+    public UserData usuario;
+    public string token;
+}
+
+[Serializable]
+public class UserData
+{
+    public string _id;
+    public string username;
+    public int score;
+    public ScoreData data;
+
+    public int GetRealScore()
+    {
+        if (data != null && data.score > 0) return data.score;
+        return score;
+    }
+}
+
+[Serializable]
+public class UserListResponse
+{
+    public List<UserData> usuarios;
+}
+
+[Serializable]
+public class ScoreData
+{
+    public int score;
+}
+
+[Serializable]
+public class PatchUserRequest
+{
+    public string username;
+    public ScoreData data;
+}
+
+[Serializable]
+public class UpdateScoreRequest
+{
+    public ScoreData data;
 }
