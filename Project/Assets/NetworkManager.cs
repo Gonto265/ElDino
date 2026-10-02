@@ -178,4 +178,24 @@ public class NetworkManager : MonoBehaviour
             }
         }
     }
+
+    public void OnClickRecoverPassword()
+    {
+        string email = inputNombre.text.Trim();
+
+        if (string.IsNullOrEmpty(email))
+        {
+            Debug.LogError("❌ Ingresa tu correo en el campo superior para recuperar la contraseña.");
+            return;
+        }
+
+        auth.SendPasswordResetEmailAsync(email).ContinueWith(t => {
+            if (t.IsFaulted) {
+                Debug.LogError("❌ Error al enviar correo: " + t.Exception.Flatten().InnerExceptions[0].Message);
+                return;
+            }
+            
+            Debug.Log("✅ Correo de recuperación enviado. Revisa tu bandeja de entrada.");
+        });
+    }
 }
