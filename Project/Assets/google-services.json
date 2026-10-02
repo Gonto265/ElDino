@@ -1,0 +1,30 @@
+{
+  "project_info": {
+    "project_number": "810612093622",
+    "firebase_url": "https://unityfirebase-714a1-default-rtdb.firebaseio.com",
+    "project_id": "unityfirebase-714a1",
+    "storage_bucket": "unityfirebase-714a1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:810612093622:android:dfb7fda2b55c72da03ac17",
+        "android_client_info": {
+          "package_name": "com.universidad.dino"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAxPKz31VxTpHHoSvfA1N4h1_OG9LQaCsU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
